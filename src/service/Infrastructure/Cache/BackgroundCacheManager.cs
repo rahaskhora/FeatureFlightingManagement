@@ -10,37 +10,37 @@ namespace Microsoft.FeatureFlighting.Infrastructure.Cache
 {
     internal class BackgroundCacheManager : IBackgroundCacheManager
     {
-        private readonly IList<IBackgroundCacheable> _cacheables;
-        private static readonly Dictionary<string, List<BackgroundCacheParameters>> _backgroundCacheablesMap = new();
+        private readonly IList<IBackgroundCacheableService> _cacheableServices;
+        private static readonly Dictionary<string, List<CacheParameters>> _backgroundCacheablesMap = new();
         private int _period = 5;
 
-        public BackgroundCacheManager(IEnumerable<IBackgroundCacheable> backgroundCacheables)
+        public BackgroundCacheManager(IEnumerable<IBackgroundCacheableService> backgroundCacheableServices)
         {
-            _cacheables = backgroundCacheables.ToList();
+            _cacheableServices = backgroundCacheableServices.ToList();
         }
 
         public void Init(int period = 5)
         {
             _period = period > 0 ? period : _period;
-            foreach (IBackgroundCacheable cacheable in _cacheables)
+            foreach (IBackgroundCacheableService cacheableService in _cacheableServices)
             {
-                if (!(_backgroundCacheablesMap.ContainsKey(cacheable.CacheableServiceId)))
-                    _backgroundCacheablesMap.Add(cacheable.CacheableServiceId, new());
-                cacheable.ObjectCached += AddCacheParameter;
+                if (!(_backgroundCacheablesMap.ContainsKey(cacheableService.CacheableServiceId)))
+                    _backgroundCacheablesMap.Add(cacheableService.CacheableServiceId, new());
+                cacheableService.ObjectCached += AddCacheParameter;
             }
         }
 
-        private void AddCacheParameter(object sender, BackgroundCacheParameters cacheParameters)
+        private void AddCacheParameter(object sender, CacheParameters cacheParameters)
         {
-            string cacheableServiceId = (sender as IBackgroundCacheable)?.CacheableServiceId ?? string.Empty;
+            string cacheableServiceId = (sender as IBackgroundCacheableService)?.CacheableServiceId ?? string.Empty;
             if (!_backgroundCacheablesMap.ContainsKey(cacheableServiceId))
                 return;
 
             cacheParameters.UpdateNextRecacheTimestamp();
-            List<BackgroundCacheParameters> cachedParameters = _backgroundCacheablesMap[cacheableServiceId];
+            List<CacheParameters> cachedParameters = _backgroundCacheablesMap[cacheableServiceId];
             if (!cachedParameters.Any(param => param.CacheKey == cacheParameters.CacheKey))
             {
-                _backgroundCacheablesMap[((IBackgroundCacheable)sender).CacheableServiceId].Add(cacheParameters);
+                _backgroundCacheablesMap[cacheableServiceId].Add(cacheParameters);
             }
         }
 
@@ -49,25 +49,24 @@ namespace Microsoft.FeatureFlighting.Infrastructure.Cache
             if (_backgroundCacheablesMap == null || !_backgroundCacheablesMap.Any())
                 return;
 
-            foreach (IBackgroundCacheable cacheable in _cacheables)
+            foreach (IBackgroundCacheableService cacheableService in _cacheableServices)
             {
-                if (_backgroundCacheablesMap.ContainsKey(cacheable.CacheableServiceId))
+                if (_backgroundCacheablesMap.ContainsKey(cacheableService.CacheableServiceId))
                 {
-                    foreach (BackgroundCacheParameters cacheParameters in
-                        _backgroundCacheablesMap[cacheable.CacheableServiceId].Where(param => param.ShouldRecache(_period)))
+                    foreach (CacheParameters cacheParameters in
+                        _backgroundCacheablesMap[cacheableService.CacheableServiceId].Where(param => param.ShouldRecache(_period)))
                     {
 
-                        await cacheable.Recache(cacheParameters, trackingIds).ConfigureAwait(false);
+                        await cacheableService.Recache(cacheParameters, trackingIds).ConfigureAwait(false);
                         cacheParameters.UpdateNextRecacheTimestamp();
                     }
                 }
             }
         }
 
-
         public void Cleanup()
         {
-            _cacheables.Clear();
+            _cacheableServices.Clear();
             _backgroundCacheablesMap.Clear();
         }
     }

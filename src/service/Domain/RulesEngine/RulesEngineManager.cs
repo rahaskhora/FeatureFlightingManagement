@@ -14,7 +14,7 @@ using Microsoft.FeatureFlighting.Common.AppExceptions;
 namespace Microsoft.FeatureFlighting.Core.RulesEngine
 {   
     /// <inheritdoc>/>
-    public class RulesEngineManager: IRulesEngineManager, IBackgroundCacheable<IRulesEngineEvaluator>
+    public class RulesEngineManager: IRulesEngineManager, IBackgroundCacheableService<IRulesEngineEvaluator>
     {   
         private readonly ITenantConfigurationProvider _tenantConfigurationProvider;
         private readonly IBlobProviderFactory _blobProviderFactory;
@@ -22,7 +22,7 @@ namespace Microsoft.FeatureFlighting.Core.RulesEngine
 
         public string CacheableServiceId => nameof(RulesEngineManager);
 
-        public event EventHandler<BackgroundCacheParameters> ObjectCached;
+        public event EventHandler<CacheParameters> ObjectCached;
 
         public RulesEngineManager(IOperatorStrategy operatorEvaluatorStrategy, ITenantConfigurationProvider tenantConfigurationProvider, IBlobProviderFactory blobProviderFactory, ICacheFactory cacheFactory)
         {
@@ -46,64 +46,36 @@ namespace Microsoft.FeatureFlighting.Core.RulesEngine
             if (cachedRuleEngine != null)
                 return cachedRuleEngine;
 
-            IRulesEngineEvaluator evaluator = await CreateRulesEngine(workflowName, tenant, trackingIds);
-
-            //IBlobProvider blobProvider = await _blobProviderFactory.CreateBreWorkflowProvider(tenant);
-            //string workflowJson = await blobProvider.Get($"{workflowName}.json", trackingIds);
-            //if (string.IsNullOrWhiteSpace(workflowJson))
-            //    throw new RuleEngineException(workflowName, tenant, "Rule engine not found in the configured storage location", "FeatureFlighting.RuleEngineManager.Build", trackingIds.CorrelationId, trackingIds.TransactionId);
-
-            //IRulesEngine ruleEngine = new RE.RulesEngine(
-            //    jsonConfig: new string[] { workflowJson },
-            //    reSettings: new ReSettings() { CustomTypes = new Type[] { typeof(Operator) } },
-            //    logger: null);
-
-            //IRulesEngineEvaluator evaluator = new RulesEngineEvaluator(ruleEngine, workflowName, tenantConfiguration);
-            await CacheRuleEvaluator((RulesEngineEvaluator)evaluator, tenant, workflowName, tenantConfiguration.BusinessRuleEngine.CacheDuration, trackingIds);
+            IRulesEngineEvaluator evaluator = await CreateRulesEvaluator(workflowName, tenant, trackingIds, setCache: true);
             return evaluator;
         }
 
         private Task<IRulesEngineEvaluator> GetCachedRuleEvaluator(string tenant, string workflowName, LoggerTrackingIds trackingIds)
         {
-            BackgroundCacheParameters cacheParameters = new()
+            CacheParameters cacheParameters = new()
             {
                 CacheKey = $"{tenant}_{workflowName}",
                 ObjectId = workflowName,
                 Tenant = tenant
             };
             return GetCachedObject(cacheParameters, trackingIds);
-
-            //ICache breCache = _cacheFactory.Create(tenant, nameof(TenantConfiguration.Cache.RulesEngine), trackingIds.CorrelationId, trackingIds.TransactionId);
-            //if (breCache == null)
-            //    return null;
-
-            //IRulesEngineEvaluator cachedRuleEngine = await breCache.Get<RulesEngineEvaluator>(workflowName, trackingIds.CorrelationId, trackingIds.TransactionId);
-            //return cachedRuleEngine;
         }
 
-        private Task CacheRuleEvaluator(RulesEngineEvaluator ruleEvaluator, string tenant, string workflowName, int cacheDuration, LoggerTrackingIds trackingIds)
+        private async Task<IRulesEngineEvaluator> CreateRulesEvaluator(string workflowName, string tenant, LoggerTrackingIds trackingIds, bool setCache)
         {
-            BackgroundCacheParameters cacheParameters = new()
+            TenantConfiguration tenantConfiguration = await _tenantConfigurationProvider.Get(tenant);
+            CacheParameters cacheParameters = new()
             {
                 CacheKey = $"{tenant}_{workflowName}",
                 ObjectId = workflowName,
                 Tenant = tenant,
-                CacheDuration = cacheDuration
+                CacheDuration = tenantConfiguration.BusinessRuleEngine.CacheDuration
             };
-            BackgroundCacheableObject<IRulesEngineEvaluator> cacheableObject = new()
-            {
-                Object = ruleEvaluator,
-                CacheParameters = cacheParameters
-            };
-            return SetCacheObject(cacheableObject, trackingIds);
 
-            //ICache breCache = _cacheFactory.Create(tenant, nameof(TenantConfiguration.Cache.RulesEngine), trackingIds.CorrelationId, trackingIds.TransactionId);
-            //if (breCache == null)
-            //    return;
-            //await breCache.Set(workflowName, ruleEvaluator, trackingIds.CorrelationId, trackingIds.TransactionId, relativeExpirationMins: cacheDuration);
+            return (await CreateCacheableObject(cacheParameters, setCache, trackingIds)).Object;
         }
 
-        public async Task<IRulesEngineEvaluator> GetCachedObject(BackgroundCacheParameters cacheParameters, LoggerTrackingIds trackingIds)
+        public async Task<IRulesEngineEvaluator> GetCachedObject(CacheParameters cacheParameters, LoggerTrackingIds trackingIds)
         {
             string workflowName = cacheParameters.ObjectId;
             ICache breCache = _cacheFactory.Create(cacheParameters.Tenant, nameof(TenantConfiguration.Cache.RulesEngine), trackingIds.CorrelationId, trackingIds.TransactionId);
@@ -114,7 +86,7 @@ namespace Microsoft.FeatureFlighting.Core.RulesEngine
             return cachedRuleEngine;
         }
 
-        public async Task SetCacheObject(BackgroundCacheableObject<IRulesEngineEvaluator> cacheableObject, LoggerTrackingIds trackingIds)
+        public async Task SetCacheObject(CacheableObject<IRulesEngineEvaluator> cacheableObject, LoggerTrackingIds trackingIds)
         {
             string workflowName = cacheableObject.CacheParameters.ObjectId;
             TenantConfiguration tenantConfiguration = await _tenantConfigurationProvider.Get(cacheableObject.CacheParameters.Tenant);
@@ -126,18 +98,7 @@ namespace Microsoft.FeatureFlighting.Core.RulesEngine
             ObjectCached?.Invoke(this, cacheableObject.CacheParameters);
         }
 
-        private async Task<IRulesEngineEvaluator> CreateRulesEngine(string workflowName, string tenant, LoggerTrackingIds trackingIds)
-        {
-            BackgroundCacheParameters cacheParameters = new()
-            {
-                ObjectId = workflowName,
-                Tenant = tenant,
-                CacheKey = $"{tenant}_{workflowName}"
-            };
-            return (await CreateCacheableObject(cacheParameters, trackingIds)).Object;
-        }
-
-        public async Task<BackgroundCacheableObject<IRulesEngineEvaluator>> CreateCacheableObject(BackgroundCacheParameters cacheParameters, LoggerTrackingIds trackingIds)
+        public async Task<CacheableObject<IRulesEngineEvaluator>> CreateCacheableObject(CacheParameters cacheParameters, bool setCache, LoggerTrackingIds trackingIds)
         {
             string workflowName = cacheParameters.ObjectId;
             TenantConfiguration tenantConfiguration = await _tenantConfigurationProvider.Get(cacheParameters.Tenant);
@@ -155,18 +116,21 @@ namespace Microsoft.FeatureFlighting.Core.RulesEngine
 
             
             IRulesEngineEvaluator evaluator = new RulesEngineEvaluator(ruleEngine, workflowName, tenantConfiguration);
-            BackgroundCacheableObject<IRulesEngineEvaluator> cacheableRulesEngineEvaluator = new()
+            CacheableObject<IRulesEngineEvaluator> cacheableRulesEngineEvaluator = new()
             {
                 Object = evaluator,
                 CacheParameters = cacheParameters
             };
+
+            if (setCache)
+                await SetCacheObject(cacheableRulesEngineEvaluator, trackingIds);
+
             return cacheableRulesEngineEvaluator;
         }
 
-        public async Task Recache(BackgroundCacheParameters cacheParameters, LoggerTrackingIds trackingIds)
+        public Task Recache(CacheParameters cacheParameters, LoggerTrackingIds trackingIds)
         {
-            BackgroundCacheableObject<IRulesEngineEvaluator> cacheableObject = await CreateCacheableObject(cacheParameters, trackingIds);
-            await SetCacheObject(cacheableObject, trackingIds);
+            return CreateCacheableObject(cacheParameters, true, trackingIds);
         }
     }
 }

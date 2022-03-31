@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Text;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
@@ -24,6 +25,8 @@ namespace Microsoft.FeatureFlighting.Core.Evaluation
         {
             ConcurrentDictionary<string, bool> result = new();
             List<Task> evaluationTasks = new();
+            ConcurrentDictionary<string, string> telemetryProperties = new();
+
             foreach (string feature in features)
             {
                 evaluationTasks.Add(Task.Run(async () =>
@@ -31,12 +34,13 @@ namespace Microsoft.FeatureFlighting.Core.Evaluation
                     var startedAt = DateTime.UtcNow;
                     bool isEnabled = await _singleFlagEvaluator.IsEnabled(feature, tenantConfiguration, environment).ConfigureAwait(false);
                     var completedAt = DateTime.UtcNow;
-                    @event.AddProperty(feature, isEnabled.ToString());
-                    @event.AddProperty(new StringBuilder().Append(feature).Append(":TimeTaken").ToString(), (completedAt - startedAt).TotalMilliseconds.ToString());
+                    telemetryProperties.TryAdd(feature, isEnabled.ToString());
+                    telemetryProperties.TryAdd(new StringBuilder().Append(feature).Append(":TimeTaken").ToString(), (completedAt - startedAt).TotalMilliseconds.ToString());
                     result.AddOrUpdate(feature, isEnabled, (feature, eval) => eval);
                 }));
             }
             await Task.WhenAll(evaluationTasks).ConfigureAwait(false);
+            @event.AddProperties(telemetryProperties.ToDictionary(kv => kv.Key, kv => kv.Value));
             return result;
         }
     }
